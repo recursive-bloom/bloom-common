@@ -5,11 +5,9 @@ pub mod block;
 
 /// Type for block number.
 pub type BlockNumber = u64;
-pub type TransactionIndex = u64;
-
+pub type TxIndex = u64;
 
 use std::{fmt, error};
-
 use ethereum_types::U256;
 use parity_crypto::publickey::{Error as EthPublicKeyCryptoError};
 

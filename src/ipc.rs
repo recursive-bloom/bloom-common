@@ -5,7 +5,7 @@ use ethereum_types::{H256,U256,Address};
 use parity_bytes::Bytes;
 use rlp_derive::{RlpEncodable, RlpDecodable};
 
-use crate::transaction::{UnverifiedTransaction};
+use crate::transaction::{UnverifiedTx};
 use crate::header::Header;
 use log::{debug, error};
 use zmq::Socket;
@@ -81,7 +81,7 @@ pub struct CreateHeaderReq {
     pub extra_data: Bytes,
     pub gas_limit: U256,
     pub difficulty: U256,
-    pub transactions: Vec<UnverifiedTransaction>,
+    pub transactions: Vec<UnverifiedTx>,
 }
 
 impl CreateHeaderReq {
@@ -90,7 +90,7 @@ impl CreateHeaderReq {
                extra_data: Bytes,
                gas_limit: U256,
                difficulty: U256,
-               transactions: Vec<UnverifiedTransaction>) -> Self{
+               transactions: Vec<UnverifiedTx>) -> Self{
         CreateHeaderReq {
             parent_block_hash,
             author,
@@ -106,6 +106,7 @@ impl CreateHeaderReq {
 #[derive(Default, Debug, Clone, PartialEq,RlpEncodable, RlpDecodable)]
 pub struct CreateHeaderResp(pub Header);
 
+
 /// method: LatestBlocks, Request
 #[derive(Default, Debug, Clone, PartialEq,RlpEncodable, RlpDecodable)]
 pub struct LatestBlocksReq(pub u64);
@@ -113,12 +114,14 @@ pub struct LatestBlocksReq(pub u64);
 #[derive(Default, Debug, Clone, PartialEq,RlpEncodable, RlpDecodable)]
 pub struct LatestBlocksResp(pub Vec<Header>);
 
+
 /// method: ApplyBlock, Request
 #[derive(Default, Debug, Clone, PartialEq,RlpEncodable, RlpDecodable)]
-pub struct ApplyBlockReq(pub Header,pub Vec<UnverifiedTransaction>);
+pub struct ApplyBlockReq(pub Header,pub Vec<UnverifiedTx>);
 /// method: ApplyBlock, Response
 #[derive(Default, Debug, Clone, PartialEq,RlpEncodable, RlpDecodable)]
 pub struct ApplyBlockResp(pub bool);
+
 
 /// method: AccountInfo, Request
 #[derive(Default, Debug, Clone, PartialEq,RlpEncodable, RlpDecodable)]
@@ -127,12 +130,22 @@ pub struct AccountInfoReq(pub Address);
 #[derive(Default, Debug, Clone, PartialEq,RlpEncodable, RlpDecodable)]
 pub struct AccountInfoResp(pub U256, pub U256);
 
+
 /// method: TxHashList, Request
 #[derive(Default, Debug, Clone, PartialEq,RlpEncodable, RlpDecodable)]
 pub struct TxHashListReq(pub H256);
 /// method: TxHashList, Response
 #[derive(Default, Debug, Clone, PartialEq,RlpEncodable, RlpDecodable)]
 pub struct TxHashListResp(pub Vec<H256>);
+
+
+pub fn ipc_request(socket: &Socket, request: IpcRequest) -> IpcReply {
+    socket.send(rlp::encode(&request), 0).unwrap();
+    let mut received_parts = socket.recv_multipart(0).unwrap();
+    let msg_bytes = received_parts.pop().unwrap();
+    rlp::decode(&msg_bytes).unwrap()
+}
+
 
 pub fn query_account_info(socket: &Socket, account: &Address) -> (U256, U256) {
     let request = IpcRequest {
@@ -141,20 +154,12 @@ pub fn query_account_info(socket: &Socket, account: &Address) -> (U256, U256) {
         params: rlp::encode(&AccountInfoReq(*account)),
     };
 
-    let reply = request_chain(socket, request);
+    let reply = ipc_request(socket, request);
     let resp: AccountInfoResp = rlp::decode(&reply.result).unwrap();
 
     let (nonce, balance) = (resp.0, resp.1);
     debug!("query accout info: {}, {}, {}", account, nonce, balance);
     (nonce, balance)
-}
-
-
-pub fn request_chain(socket: &Socket, request: IpcRequest) -> IpcReply {
-    socket.send(rlp::encode(&request), 0).unwrap();
-    let mut received_parts = socket.recv_multipart(0).unwrap();
-    let msg_bytes = received_parts.pop().unwrap();
-    rlp::decode(&msg_bytes).unwrap()
 }
 
 pub fn query_last_block(socket: &Socket) -> Header {
@@ -164,7 +169,7 @@ pub fn query_last_block(socket: &Socket) -> Header {
         params: rlp::encode(&LatestBlocksReq(1)),
     };
 
-    let reply = request_chain(&socket, request);
+    let reply = ipc_request(&socket, request);
     let resp: LatestBlocksResp = rlp::decode(&reply.result).unwrap();
 
     let last_block_header = resp.0.get(0).unwrap().clone();
@@ -178,7 +183,7 @@ pub fn query_latest_blocks(socket: &Socket, n: u64) -> Vec<Header> {
         params: rlp::encode(&LatestBlocksReq(n)),
     };
 
-    let reply = request_chain(&socket, request);
+    let reply = ipc_request(&socket, request);
     let resp: LatestBlocksResp = rlp::decode(&reply.result).unwrap();
 
     let headers_vec = resp.0;
@@ -192,7 +197,7 @@ pub fn query_tx_hash_list(socket: &Socket, block_hash: H256) -> Vec<H256> {
         params: rlp::encode(&TxHashListReq(block_hash)),
     };
 
-    let reply = request_chain(&socket, request);
+    let reply = ipc_request(&socket, request);
     let resp: TxHashListResp = rlp::decode(&reply.result).unwrap();
 
     let hash_list = resp.0;

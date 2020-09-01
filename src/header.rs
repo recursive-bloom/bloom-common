@@ -9,32 +9,16 @@ use std::str::FromStr;
 
 #[derive(Debug, Clone, Eq)]
 pub struct Header {
-    /// Parent hash.
     parent_hash: H256,
-    /// Block timestamp.
     timestamp: u64,
-    /// Block number.
     number: BlockNumber,
-    /// Block author.
     author: Address,
-
-    /// Transactions root.
-    transactions_root: H256,
-
-    /// Block extra data.
     extra_data: Bytes,
-
-    /// State root.
+    txs_root: H256,
     state_root: H256,
-
-    /// Gas used for contracts execution.
     gas_used: U256,
-    /// Block gas limit.
     gas_limit: U256,
-
-    /// Block difficulty.
     difficulty: U256,
-
     /// Memoized hash of that header and the seal.
     hash: Option<H256>,
 }
@@ -51,7 +35,7 @@ impl PartialEq for Header {
             self.timestamp == c.timestamp &&
             self.number == c.number &&
             self.author == c.author &&
-            self.transactions_root == c.transactions_root &&
+            self.txs_root == c.txs_root &&
             self.extra_data == c.extra_data &&
             self.state_root == c.state_root &&
             self.gas_used == c.gas_used &&
@@ -68,7 +52,7 @@ impl Default for Header {
             number: 0,
             author: Address::zero(),
 
-            transactions_root: KECCAK_NULL_RLP,
+            txs_root: KECCAK_NULL_RLP,
             extra_data: vec![],
 
             state_root: KECCAK_NULL_RLP,
@@ -90,7 +74,7 @@ impl Header {
             number: 0,
             author: Address::zero(),
 
-            transactions_root: KECCAK_NULL_RLP,
+            txs_root: KECCAK_NULL_RLP,
             extra_data: vec![],
 
             state_root,
@@ -124,7 +108,7 @@ impl Header {
     pub fn state_root(&self) -> H256 { self.state_root.clone() }
 
     /// Get the transactions root field of the header.
-    pub fn transactions_root(&self) -> H256 { self.transactions_root.clone() }
+    pub fn transactions_root(&self) -> H256 { self.txs_root.clone() }
 
     /// Get the gas used field of the header.
     pub fn gas_used(&self) -> U256 { self.gas_used.clone() }
@@ -147,7 +131,7 @@ impl Header {
 
     /// Set the transactions root field of the header.
     pub fn set_transactions_root(&mut self, a: H256) {
-        change_field(&mut self.hash, &mut self.transactions_root, a);
+        change_field(&mut self.hash, &mut self.txs_root, a);
     }
 
     /// Set the timestamp field of the header.
@@ -222,7 +206,7 @@ impl Header {
         s.append(&self.parent_hash);
         s.append(&self.author);
         s.append(&self.state_root);
-        s.append(&self.transactions_root);
+        s.append(&self.txs_root);
         s.append(&self.difficulty);
         s.append(&self.number);
         s.append(&self.gas_limit);
@@ -242,11 +226,11 @@ fn change_field<T>(hash: &mut Option<H256>, field: &mut T, value: T) where T: Pa
 
 impl Decodable for Header {
     fn decode(r: &Rlp) -> Result<Self, DecoderError> {
-        let blockheader = Header {
+        let block_header = Header {
             parent_hash: r.val_at(0)?,
             author: r.val_at(1)?,
             state_root: r.val_at(2)?,
-            transactions_root: r.val_at(3)?,
+            txs_root: r.val_at(3)?,
             difficulty: r.val_at(4)?,
             number: r.val_at(5)?,
             gas_limit: r.val_at(6)?,
@@ -256,7 +240,7 @@ impl Decodable for Header {
             hash: keccak(r.as_raw()).into(),
         };
 
-        Ok(blockheader)
+        Ok(block_header)
     }
 }
 

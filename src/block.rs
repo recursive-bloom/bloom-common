@@ -1,7 +1,7 @@
 
 use crate::{
 	header::Header,
-	transaction::{UnverifiedTransaction},
+	transaction::{UnverifiedTx},
 };
 use parity_bytes::Bytes;
 use rlp::{Rlp, RlpStream, Decodable, DecoderError, Encodable};
@@ -14,15 +14,15 @@ pub struct Block {
 	/// The header of this block.
 	pub header: Header,
 	/// The transactions in this block.
-	pub transactions: Vec<UnverifiedTransaction>,
+	pub uv_tx_list: Vec<UnverifiedTx>,
 }
 
 impl Block {
 
-	pub fn new(header: Header, transactions: Vec<UnverifiedTransaction>) -> Self {
+	pub fn new(header: Header, transactions: Vec<UnverifiedTx>) -> Self {
 		Block{
 			header,
-			transactions,
+			uv_tx_list: transactions,
 		}
 	}
 }
@@ -32,7 +32,7 @@ impl Encodable for Block {
 	fn rlp_append(&self, s: &mut RlpStream){
 		s.begin_list(2);
 		s.append(&self.header);
-		s.append_list(&self.transactions);
+		s.append_list(&self.uv_tx_list);
 	}
 }
 
@@ -46,7 +46,7 @@ impl Decodable for Block {
 		}
 		Ok(Block {
 			header: rlp.val_at(0)?,
-			transactions: rlp.list_at(1)?,
+			uv_tx_list: rlp.list_at(1)?,
 		})
 	}
 }

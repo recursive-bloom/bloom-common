@@ -1,7 +1,7 @@
 
 use std::ops::Deref;
 
-use crate::{BlockNumber,TransactionIndex,Error};
+use crate::{BlockNumber, TxIndex, Error};
 
 use ethereum_types::{H256, H160, Address, U256, BigEndianHash};
 use parity_crypto::publickey::{Signature, Secret, Public, recover, public_to_address};
@@ -83,28 +83,25 @@ pub mod signature {
     }
 }
 
-/// A set of information describing an externally-originating message call
-/// or contract creation operation.
 #[derive(Default, Debug, Clone, PartialEq, Eq)]
-pub struct Transaction {
-    /// Nonce.
+pub struct UsignedTx {
     pub nonce: U256,
-    /// Gas price.
     pub gas_price: U256,
-    /// Gas paid up front for transaction execution.
     pub gas: U256,
-    /// Action, can be either call or contract create.
     pub action: Action,
-    /// Transfered value.
     pub value: U256,
-    /// Transaction data.
     pub data: Bytes,
 }
 
-impl Transaction {
+impl UsignedTx {
     /// Append object with a without signature into RLP stream
-    pub fn rlp_append_unsigned_transaction(&self, s: &mut RlpStream, chain_id: Option<u64>) {
-        s.begin_list(if chain_id.is_none() { 6 } else { 9 });
+    pub fn rlp_append_unsigned_tx(&self, s: &mut RlpStream, chain_id: Option<u64>) {
+        let len = if chain_id.is_none() {
+            6
+        } else {
+            9
+        };
+        s.begin_list(len);
         s.append(&self.nonce);
         s.append(&self.gas_price);
         s.append(&self.gas);
@@ -120,26 +117,26 @@ impl Transaction {
 }
 
 
-impl Transaction {
+impl UsignedTx {
     /// The message hash of the transaction.
     pub fn hash(&self, chain_id: Option<u64>) -> H256 {
         let mut stream = RlpStream::new();
-        self.rlp_append_unsigned_transaction(&mut stream, chain_id);
+        self.rlp_append_unsigned_tx(&mut stream, chain_id);
         keccak(stream.as_raw())
     }
 
     /// Signs the transaction as coming from `sender`.
-    pub fn sign(self, secret: &Secret, chain_id: Option<u64>) -> SignedTransaction {
+    pub fn sign(self, secret: &Secret, chain_id: Option<u64>) -> SignedTx {
         let sig = parity_crypto::publickey::sign(secret, &self.hash(chain_id))
             .expect("data is valid and context has signing capabilities; qed");
-        SignedTransaction::new(self.with_signature(sig, chain_id))
+        SignedTx::new(self.with_signature(sig, chain_id))
             .expect("secret is valid so it's recoverable")
     }
 
     /// Signs the transaction with signature.
-    pub fn with_signature(self, sig: Signature, chain_id: Option<u64>) -> UnverifiedTransaction {
-        UnverifiedTransaction {
-            unsigned: self,
+    pub fn with_signature(self, sig: Signature, chain_id: Option<u64>) -> UnverifiedTx {
+        UnverifiedTx {
+            us_tx: self,
             r: sig.r().into(),
             s: sig.s().into(),
             v: signature::add_chain_replay_protection(sig.v() as u64, chain_id),
@@ -149,9 +146,9 @@ impl Transaction {
 
     /// Useful for test incorrectly signed transactions.
     #[cfg(test)]
-    pub fn invalid_sign(self) -> UnverifiedTransaction {
-        UnverifiedTransaction {
-            unsigned: self,
+    pub fn invalid_sign(self) -> UnverifiedTx {
+        UnverifiedTx {
+            us_tx: self,
             r: U256::one(),
             s: U256::one(),
             v: 0,
@@ -160,10 +157,10 @@ impl Transaction {
     }
 
     /// Specify the sender; this won't survive the serialize/deserialize process, but can be cloned.
-    pub fn fake_sign(self, from: Address) -> SignedTransaction {
-        SignedTransaction {
-            transaction: UnverifiedTransaction {
-                unsigned: self,
+    pub fn fake_sign(self, from: Address) -> SignedTx {
+        SignedTx {
+            uv_tx: UnverifiedTx {
+                us_tx: self,
                 r: U256::one(),
                 s: U256::one(),
                 v: 0,
@@ -178,10 +175,10 @@ impl Transaction {
     /// This method is used in json tests as well as
     /// signature verification tests.
     #[cfg(any(test, feature = "test-helpers"))]
-    pub fn null_sign(self, chain_id: u64) -> SignedTransaction {
-        SignedTransaction {
-            transaction: UnverifiedTransaction {
-                unsigned: self,
+    pub fn null_sign(self, chain_id: u64) -> SignedTx {
+        SignedTx {
+            uv_tx: UnverifiedTx {
+                us_tx: self,
                 r: U256::zero(),
                 s: U256::zero(),
                 v: chain_id,
@@ -195,36 +192,30 @@ impl Transaction {
 
 /// Signed transaction information without verified signature.
 #[derive(Debug, Clone, Eq, PartialEq)]
-pub struct UnverifiedTransaction {
-    /// Plain Transaction.
-    unsigned: Transaction,
-    /// The V field of the signature; the LS bit described which half of the curve our point falls
-    /// in. The MS bits describe which chain this transaction is for. If 27/28, its for all chains.
+pub struct UnverifiedTx {
+    us_tx: UsignedTx,
     v: u64,
-    /// The R field of the signature; helps describe the point on the curve.
     r: U256,
-    /// The S field of the signature; helps describe the point on the curve.
     s: U256,
-    /// Hash of the transaction
     hash: H256,
 }
 
-impl Deref for UnverifiedTransaction {
-    type Target = Transaction;
+impl Deref for UnverifiedTx {
+    type Target = UsignedTx;
 
     fn deref(&self) -> &Self::Target {
-        &self.unsigned
+        &self.us_tx
     }
 }
 
-impl rlp::Decodable for UnverifiedTransaction {
+impl rlp::Decodable for UnverifiedTx {
     fn decode(d: &Rlp) -> Result<Self, DecoderError> {
         if d.item_count()? != 9 {
             return Err(DecoderError::RlpIncorrectListLen);
         }
         let hash = keccak(d.as_raw());
-        Ok(UnverifiedTransaction {
-            unsigned: Transaction {
+        Ok(UnverifiedTx {
+            us_tx: UsignedTx {
                 nonce: d.val_at(0)?,
                 gas_price: d.val_at(1)?,
                 gas: d.val_at(2)?,
@@ -240,13 +231,13 @@ impl rlp::Decodable for UnverifiedTransaction {
     }
 }
 
-impl rlp::Encodable for UnverifiedTransaction {
-    fn rlp_append(&self, s: &mut RlpStream) { self.rlp_append_sealed_transaction(s) }
+impl rlp::Encodable for UnverifiedTx {
+    fn rlp_append(&self, s: &mut RlpStream) { self.rlp_append_sealed_tx(s) }
 }
 
-impl UnverifiedTransaction {
+impl UnverifiedTx {
     /// Used to compute hash of created transactions
-    fn compute_hash(mut self) -> UnverifiedTransaction {
+    fn compute_hash(mut self) -> UnverifiedTx {
         let hash = keccak(&*self.rlp_bytes());
         self.hash = hash;
         self
@@ -254,14 +245,14 @@ impl UnverifiedTransaction {
 
     /// Returns transaction receiver, if any
     pub fn receiver(&self) -> Option<Address> {
-        match self.unsigned.action {
+        match self.us_tx.action {
             Action::Create => None,
             Action::Call(receiver) => Some(receiver),
         }
     }
 
     /// Append object with a signature into RLP stream
-    fn rlp_append_sealed_transaction(&self, s: &mut RlpStream) {
+    fn rlp_append_sealed_tx(&self, s: &mut RlpStream) {
         s.begin_list(9);
         s.append(&self.nonce);
         s.append(&self.gas_price);
@@ -275,8 +266,8 @@ impl UnverifiedTransaction {
     }
 
     ///	Reference to unsigned part of this transaction.
-    pub fn as_unsigned(&self) -> &Transaction {
-        &self.unsigned
+    pub fn as_unsigned(&self) -> &UsignedTx {
+        &self.us_tx
     }
 
     /// Returns standardized `v` value (0, 1 or 4 (invalid))
@@ -316,7 +307,7 @@ impl UnverifiedTransaction {
 
     /// Recovers the public key of the sender.
     pub fn recover_public(&self) -> Result<Public, parity_crypto::publickey::Error> {
-        Ok(recover(&self.signature(), &self.unsigned.hash(self.chain_id()))?)
+        Ok(recover(&self.signature(), &self.us_tx.hash(self.chain_id()))?)
     }
 
     /// Verify basic signature params. Does not attempt sender recovery.
@@ -333,43 +324,43 @@ impl UnverifiedTransaction {
     }
 
     /// Try to verify transaction and recover sender.
-    pub fn verify_unordered(self) -> Result<SignedTransaction, parity_crypto::publickey::Error> {
-        SignedTransaction::new(self)
+    pub fn verify_unordered(self) -> Result<SignedTx, parity_crypto::publickey::Error> {
+        SignedTx::new(self)
     }
 }
 
 /// A `UnverifiedTransaction` with successfully recovered `sender`.
 #[derive(Debug, Clone, Eq, PartialEq)]
-pub struct SignedTransaction {
-    transaction: UnverifiedTransaction,
+pub struct SignedTx {
+    uv_tx: UnverifiedTx,
     sender: Address,
     public: Option<Public>,
 }
 
-impl rlp::Encodable for SignedTransaction {
-    fn rlp_append(&self, s: &mut RlpStream) { self.transaction.rlp_append_sealed_transaction(s) }
+impl rlp::Encodable for SignedTx {
+    fn rlp_append(&self, s: &mut RlpStream) { self.uv_tx.rlp_append_sealed_tx(s) }
 }
 
-impl Deref for SignedTransaction {
-    type Target = UnverifiedTransaction;
+impl Deref for SignedTx {
+    type Target = UnverifiedTx;
     fn deref(&self) -> &Self::Target {
-        &self.transaction
+        &self.uv_tx
     }
 }
 
-impl From<SignedTransaction> for UnverifiedTransaction {
-    fn from(tx: SignedTransaction) -> Self {
-        tx.transaction
+impl From<SignedTx> for UnverifiedTx {
+    fn from(tx: SignedTx) -> Self {
+        tx.uv_tx
     }
 }
 
-impl SignedTransaction {
+impl SignedTx {
     /// Try to verify transaction and recover sender.
-    pub fn new(transaction: UnverifiedTransaction) -> Result<Self, parity_crypto::publickey::Error> {
-        let public = transaction.recover_public()?;
+    pub fn new(uv_tx: UnverifiedTx) -> Result<Self, parity_crypto::publickey::Error> {
+        let public = uv_tx.recover_public()?;
         let sender = public_to_address(&public);
-        Ok(SignedTransaction {
-            transaction,
+        Ok(SignedTx {
+            uv_tx: uv_tx,
             sender,
             public: Some(public),
         })
@@ -386,27 +377,27 @@ impl SignedTransaction {
     }
 
     /// Deconstructs this transaction back into `UnverifiedTransaction`
-    pub fn deconstruct(self) -> (UnverifiedTransaction, Address, Option<Public>) {
-        (self.transaction, self.sender, self.public)
+    pub fn deconstruct(self) -> (UnverifiedTx, Address, Option<Public>) {
+        (self.uv_tx, self.sender, self.public)
     }
 }
 
 /// Signed Transaction that is a part of canon blockchain.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct LocalizedTransaction {
+pub struct LocalizedTx {
     /// Signed part.
-    pub signed: UnverifiedTransaction,
+    pub signed: UnverifiedTx,
     /// Block number.
     pub block_number: BlockNumber,
     /// Block hash.
     pub block_hash: H256,
     /// Transaction index within block.
-    pub transaction_index: usize,
+    pub tx_index: usize,
     /// Cached sender
     pub cached_sender: Option<Address>,
 }
 
-impl LocalizedTransaction {
+impl LocalizedTx {
     /// Returns transaction sender.
     /// Panics if `LocalizedTransaction` is constructed using invalid `UnverifiedTransaction`.
     pub fn sender(&mut self) -> Address {
@@ -414,14 +405,14 @@ impl LocalizedTransaction {
             return sender;
         }
         let sender = public_to_address(&self.recover_public()
-            .expect("LocalizedTransaction is always constructed from transaction from blockchain; Blockchain only stores verified transactions; qed"));
+            .expect("Localized txs are always constructed from blockchain which only stores verified txs."));
         self.cached_sender = Some(sender);
         sender
     }
 }
 
-impl Deref for LocalizedTransaction {
-    type Target = UnverifiedTransaction;
+impl Deref for LocalizedTx {
+    type Target = UnverifiedTx;
 
     fn deref(&self) -> &Self::Target {
         &self.signed
@@ -430,124 +421,122 @@ impl Deref for LocalizedTransaction {
 
 /// Queued transaction with additional information.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct PendingTransaction {
+pub struct PendingTx {
     /// Signed transaction data.
-    pub transaction: SignedTransaction,
+    pub s_tx: SignedTx,
     /// To be activated at this condition. `None` for immediately.
     pub condition: Option<Condition>,
 }
 
-impl PendingTransaction {
+impl PendingTx {
     /// Create a new pending transaction from signed transaction.
-    pub fn new(signed: SignedTransaction, condition: Option<Condition>) -> Self {
-        PendingTransaction {
-            transaction: signed,
+    pub fn new(signed: SignedTx, condition: Option<Condition>) -> Self {
+        PendingTx {
+            s_tx: signed,
             condition: condition,
         }
     }
 }
 
-impl Deref for PendingTransaction {
-    type Target = SignedTransaction;
+impl Deref for PendingTx {
+    type Target = SignedTx;
 
-    fn deref(&self) -> &SignedTransaction { &self.transaction }
+    fn deref(&self) -> &SignedTx { &self.s_tx }
 }
 
-impl From<SignedTransaction> for PendingTransaction {
-    fn from(t: SignedTransaction) -> Self {
-        PendingTransaction {
-            transaction: t,
+impl From<SignedTx> for PendingTx {
+    fn from(s_tx: SignedTx) -> Self {
+        PendingTx {
+            s_tx: s_tx,
             condition: None,
         }
     }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum TransactionLocationError {
-    DuplicateLocation,
+pub enum TxLocationError {
+    DuplicatedLocation,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct TransactionLocation {
+pub struct TxLocation {
     pub block_hash: H256,
     pub block_number: BlockNumber,
-    pub transaction_index: TransactionIndex,
+    pub tx_index: TxIndex,
 }
 
-impl TransactionLocation {
-    pub fn new(block_hash: H256, block_number: BlockNumber, index: TransactionIndex) -> Self {
-        TransactionLocation {
+impl TxLocation {
+    pub fn new(block_hash: H256, block_number: BlockNumber, index: TxIndex) -> Self {
+        TxLocation {
             block_hash,
             block_number,
-            transaction_index: index,
+            tx_index: index,
         }
     }
 }
 
-impl Default for TransactionLocation {
+impl Default for TxLocation {
     fn default() -> Self {
-        TransactionLocation {
+        TxLocation {
             block_hash: H256::default(),
             block_number: 0,
-            transaction_index: 0,
+            tx_index: 0,
         }
     }
 }
 
-impl rlp::Encodable for TransactionLocation {
+impl rlp::Encodable for TxLocation {
     fn rlp_append(&self, s: &mut RlpStream) {
         s.begin_list(3);
         s.append(&self.block_hash);
         s.append(&self.block_number);
-        s.append(&self.transaction_index);
+        s.append(&self.tx_index);
     }
 }
 
-impl rlp::Decodable for TransactionLocation {
+impl rlp::Decodable for TxLocation {
     fn decode(d: &Rlp) -> Result<Self, DecoderError> {
         if d.item_count()? != 3 {
             return Err(DecoderError::RlpIncorrectListLen);
         }
-        Ok(TransactionLocation {
+        Ok(TxLocation {
             block_hash: d.val_at(0)?,
             block_number: d.val_at(1)?,
-            transaction_index: d.val_at(2)?,
+            tx_index: d.val_at(2)?,
         })
     }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct TransactionBody {
-    pub transaction: UnverifiedTransaction,
-    pub locations: Vec<TransactionLocation>,
+pub struct TxBody {
+    pub uv_tx: UnverifiedTx,
+    pub locations: Vec<TxLocation>,
 }
 
-impl Deref for TransactionBody {
-    type Target = UnverifiedTransaction;
+impl Deref for TxBody {
+    type Target = UnverifiedTx;
 
     fn deref(&self) -> &Self::Target {
-        &self.transaction
+        &self.uv_tx
     }
 }
 
-impl TransactionBody {
-
-    pub fn new(tx: UnverifiedTransaction) -> Self {
-        TransactionBody {
-            transaction: tx,
+impl TxBody {
+    pub fn new(tx: UnverifiedTx) -> Self {
+        TxBody {
+            uv_tx: tx,
             locations: vec![],
         }
     }
 
-    pub fn append_location(&mut self, loc: TransactionLocation) -> Result<(),TransactionLocationError>{
-
+    pub fn append_location(&mut self, loc: TxLocation) -> Result<(), TxLocationError>{
         match self.locations.iter().filter(|item| item.block_hash == (&loc).block_hash).count() {
             0 => {
                 self.locations.push(loc);
                 Ok(())
             },
             _ => {
-                Err(TransactionLocationError::DuplicateLocation)
+                Err(TxLocationError::DuplicatedLocation)
             }
         }
     }
@@ -555,7 +544,7 @@ impl TransactionBody {
 
 
 
-impl rlp::Decodable for TransactionBody {
+impl rlp::Decodable for TxBody {
     fn decode(rlp: &Rlp) -> Result<Self, rlp::DecoderError> {
         if rlp.as_raw().len() != rlp.payload_info()?.total() {
             return Err(rlp::DecoderError::RlpIsTooBig);
@@ -563,55 +552,55 @@ impl rlp::Decodable for TransactionBody {
         if rlp.item_count()? != 2 {
             return Err(rlp::DecoderError::RlpIncorrectListLen);
         }
-        Ok(TransactionBody {
-            transaction: rlp.val_at(0)?,
+        Ok(TxBody {
+            uv_tx: rlp.val_at(0)?,
             locations: rlp.list_at(1)?,
         })
     }
 }
 
-impl rlp::Encodable for TransactionBody {
+impl rlp::Encodable for TxBody {
     /// Get the RLP-encoding of the block with the seal.
     fn rlp_append(&self, s: &mut RlpStream){
         s.begin_list(2);
-        s.append(&self.transaction);
+        s.append(&self.uv_tx);
         s.append_list(&self.locations);
     }
 }
 
 
 #[derive(Debug, Clone, PartialEq)]
-pub struct TransactionHashList(Vec<H256>);
+pub struct TxHashList(pub Vec<H256>);
 
 
-impl Default for TransactionHashList {
+impl Default for TxHashList {
     fn default() -> Self {
-        TransactionHashList(vec![])
+        TxHashList(vec![])
     }
 }
 
-impl TransactionHashList {
+impl TxHashList {
 
-    pub fn new(transactions: Vec<H256>) -> Self {
-        TransactionHashList(transactions)
+    pub fn new(tx_vec: Vec<H256>) -> Self {
+        TxHashList(tx_vec)
     }
 
-    pub fn transactions(&self) -> &Vec<H256> {
+    pub fn tx_vec(&self) -> &Vec<H256> {
         &self.0
     }
 }
 
-impl From<Vec<UnverifiedTransaction>> for TransactionHashList {
-    fn from(u: Vec<UnverifiedTransaction>) -> Self {
+impl From<Vec<UnverifiedTx>> for TxHashList {
+    fn from(u: Vec<UnverifiedTx>) -> Self {
         let mut hashes = vec![];
         for t in &u {
             hashes.push(t.hash())
         }
-        TransactionHashList(hashes)
+        TxHashList(hashes)
     }
 }
 
-impl rlp::Decodable for TransactionHashList {
+impl rlp::Decodable for TxHashList {
     fn decode(rlp: &Rlp) -> Result<Self, DecoderError> {
         if rlp.as_raw().len() != rlp.payload_info()?.total() {
             return Err(DecoderError::RlpIsTooBig);
@@ -619,11 +608,11 @@ impl rlp::Decodable for TransactionHashList {
         if rlp.item_count()? != 1 {
             return Err(DecoderError::RlpIncorrectListLen);
         }
-        Ok(TransactionHashList (rlp.list_at(0)?))
+        Ok(TxHashList(rlp.list_at(0)?))
     }
 }
 
-impl rlp::Encodable for TransactionHashList {
+impl rlp::Encodable for TxHashList {
     /// Get the RLP-encoding of the block with the seal.
     fn rlp_append(&self, s: &mut RlpStream){
         s.begin_list(1);
@@ -644,7 +633,7 @@ mod tests {
     #[test]
     fn sender_test() {
         let bytes: Vec<u8> = FromHex::from_hex("f85f800182520894095e7baea6a6c7c4c2dfeb977efac326af552d870a801ba048b55bfa915ac795c431978d8a6a992b628d557da5ff759b307d495a36649353a0efffd310ac743f371de3b9f7f9cb56c0b28ad43601b4ab949f53faa07bd2c804").unwrap();
-        let t: UnverifiedTransaction = rlp::decode(&bytes).expect("decoding UnverifiedTransaction failed");
+        let t: UnverifiedTx = rlp::decode(&bytes).expect("decoding UnverifiedTransaction failed");
         assert_eq!(t.data, b"");
         assert_eq!(t.gas, U256::from(0x5208u64));
         assert_eq!(t.gas_price, U256::from(0x01u64));
@@ -676,7 +665,7 @@ mod tests {
         use parity_crypto::publickey::{Random, Generator};
 
         let key = Random.generate();
-        let t = Transaction {
+        let t = UsignedTx {
             action: Action::Create,
             nonce: U256::from(42),
             gas_price: U256::from(3000),
@@ -689,7 +678,7 @@ mod tests {
         let sig = parity_crypto::publickey::sign(&key.secret(), &hash).unwrap();
         let u = t.with_signature(sig, Some(0));
 
-        assert!(SignedTransaction::new(u).is_ok());
+        assert!(SignedTx::new(u).is_ok());
     }
 
     #[test]
@@ -697,7 +686,7 @@ mod tests {
         use parity_crypto::publickey::{Random, Generator};
 
         let key = Random.generate();
-        let t = Transaction {
+        let t = UsignedTx {
             action: Action::Create,
             nonce: U256::from(42),
             gas_price: U256::from(3000),
@@ -711,7 +700,7 @@ mod tests {
 
     #[test]
     fn fake_signing() {
-        let t = Transaction {
+        let t = UsignedTx {
             action: Action::Create,
             nonce: U256::from(42),
             gas_price: U256::from(3000),
@@ -729,7 +718,7 @@ mod tests {
 
     #[test]
     fn should_reject_null_signature() {
-        let t = Transaction {
+        let t = UsignedTx {
             nonce: U256::zero(),
             gas_price: U256::from(10000000000u64),
             gas: U256::from(21000),
@@ -738,7 +727,7 @@ mod tests {
             data: vec![]
         }.null_sign(1);
 
-        let res = SignedTransaction::new(t.transaction);
+        let res = SignedTx::new(t.uv_tx);
         match res {
             Err(parity_crypto::publickey::Error::InvalidSignature) => {}
             _ => panic!("null signature should be rejected"),
@@ -749,7 +738,7 @@ mod tests {
     fn should_recover_from_chain_specific_signing() {
         use parity_crypto::publickey::{Random, Generator};
         let key = Random.generate();
-        let t = Transaction {
+        let t = UsignedTx {
             action: Action::Create,
             nonce: U256::from(42),
             gas_price: U256::from(3000),
@@ -765,7 +754,7 @@ mod tests {
     fn should_agree_with_vitalik() {
         let test_vector = |tx_data: &str, address: &'static str| {
             let bytes = rlp::decode(&tx_data.from_hex::<Vec<u8>>().unwrap()).expect("decoding tx data failed");
-            let signed = SignedTransaction::new(bytes).unwrap();
+            let signed = SignedTx::new(bytes).unwrap();
             assert_eq!(signed.sender(), Address::from_str(&address[2..]).unwrap());
             println!("chainid: {:?}", signed.chain_id());
         };
@@ -783,12 +772,12 @@ mod tests {
     }
 
     #[test]
-    fn transaction_location_test() {
-        let mut loc1 = TransactionLocation::default();
+    fn tx_location_test() {
+        let mut loc1 = TxLocation::default();
         let block_hash = H256::from_str("40eb088232727a64c88d5e98d25e7b16ee7e9acc267c25c0088c7d1432745896").unwrap();
         loc1.block_hash = block_hash.clone();
         loc1.block_number = 100;
-        loc1.transaction_index = 2;
+        loc1.tx_index = 2;
 
         let b = loc1.rlp_bytes();
         let loc2 = rlp::decode(b.as_slice()).expect("wrong");
@@ -797,21 +786,21 @@ mod tests {
 
 
     #[test]
-    fn transaction_body_test() {
+    fn tx_body_test() {
         let bytes: Vec<u8> = FromHex::from_hex("f85f800182520894095e7baea6a6c7c4c2dfeb977efac326af552d870a801ba048b55bfa915ac795c431978d8a6a992b628d557da5ff759b307d495a36649353a0efffd310ac743f371de3b9f7f9cb56c0b28ad43601b4ab949f53faa07bd2c804").unwrap();
-        let t: UnverifiedTransaction = rlp::decode(&bytes).expect("decoding UnverifiedTransaction failed");
+        let t: UnverifiedTx = rlp::decode(&bytes).expect("decoding UnverifiedTransaction failed");
 
-        let mut loc1 = TransactionLocation::default();
+        let mut loc1 = TxLocation::default();
         let block_hash = H256::from_str("40eb088232727a64c88d5e98d25e7b16ee7e9acc267c25c0088c7d1432745896").unwrap();
         loc1.block_hash = block_hash.clone();
         loc1.block_number = 100;
-        loc1.transaction_index = 2;
+        loc1.tx_index = 2;
 
-        let mut body = TransactionBody::new(t);
+        let mut body = TxBody::new(t);
         body.append_location(loc1);
 
         let body_bytes = body.rlp_bytes();
-        let new_body: TransactionBody = rlp::decode(body_bytes.as_slice()).expect("decode error for transaction body");
+        let new_body: TxBody = rlp::decode(body_bytes.as_slice()).expect("decode error for transaction body");
 
 
         assert_eq!(new_body.data, b"");
@@ -827,22 +816,22 @@ mod tests {
     }
 
     #[test]
-    fn transactions_list_test(){
+    fn tx_list_test(){
         let tx_hash1 = H256::from_str("40eb088232727a64c88d5e98d25e7b16ee7e9acc267c25c0088c7d1432745896").unwrap();
         let tx_hash2 = H256::from_str("40eb088232727a64c88d5e98d25e7b16ee7e9acc267c25c0088c7d1432745896").unwrap();
         let txs = vec![tx_hash1,tx_hash2];
-        let tx_list = TransactionHashList::new(txs);
+        let tx_list = TxHashList::new(txs);
         let tx_bytes = tx_list.rlp_bytes();
-        let tx_list_temp: TransactionHashList = rlp::decode(tx_bytes.as_slice()).unwrap();
+        let tx_list_temp: TxHashList = rlp::decode(tx_bytes.as_slice()).unwrap();
         assert_eq!(tx_list,tx_list_temp);
     }
 
     #[test]
-    fn transactions_list_from_test() {
+    fn tx_list_from_test() {
         let bytes: Vec<u8> = FromHex::from_hex("f85f800182520894095e7baea6a6c7c4c2dfeb977efac326af552d870a801ba048b55bfa915ac795c431978d8a6a992b628d557da5ff759b307d495a36649353a0efffd310ac743f371de3b9f7f9cb56c0b28ad43601b4ab949f53faa07bd2c804").unwrap();
-        let t: UnverifiedTransaction = rlp::decode(&bytes).expect("decoding UnverifiedTransaction failed");
+        let t: UnverifiedTx = rlp::decode(&bytes).expect("decoding UnverifiedTransaction failed");
         let utrxs = vec![t.clone()];
-        let tx_list = TransactionHashList::from(utrxs.clone());
-        assert_eq!(tx_list.transactions(), &[t.compute_hash().hash])
+        let tx_list = TxHashList::from(utrxs.clone());
+        assert_eq!(tx_list.tx_vec(), &[t.compute_hash().hash])
     }
 }
